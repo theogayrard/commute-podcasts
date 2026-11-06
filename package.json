@@ -1,0 +1,46 @@
+{
+  "name": "commute-podcasts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts --production",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "tsc --noEmit",
+    "codex:login": "tsx scripts/codex.ts login",
+    "codex:status": "tsx scripts/codex.ts login status",
+    "remote:setup": "tsx scripts/remote-setup.ts",
+    "sounds:prepare": "tsx scripts/prepare-sounds.ts"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "express": "^5.1.0",
+    "ipaddr.js": "^2.2.0",
+    "jsdom": "^27.0.0",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.10.0",
+    "multer": "^2.0.2",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "undici": "^7.16.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/jsdom": "^27.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}
