@@ -46,11 +46,18 @@ export interface Episode {
   renderedCues?: RenderedCue[]; mixNote?: string; narrationTiming?: 'chapters' | 'episode';
   soundtrackDirty?: boolean;
 }
-export interface Podcast { id: string; title: string; config: PodcastConfig; createdAt: string; outline?: Outline; sample?: boolean; soundThemeId?: string }
+export interface FollowUpLink { episodeId: string; title: string }
+export interface Podcast { id: string; title: string; config: PodcastConfig; createdAt: string; outline?: Outline; sample?: boolean; soundThemeId?: string; followUp?: FollowUpLink }
 export interface Job { id: string; podcastId: string; episodeId?: string; kind: 'write' | 'audio' | 'soundtrack' | 'mix'; state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'; progress: number; message: string; error?: string; createdAt: string }
 export interface Model { id: string; name: string; description?: string; isDefault?: boolean }
 export interface AppStatus { codex: { connected: boolean; authType?: string; error?: string; models: Model[] }; gemini: { configured: boolean; model: string }; ffmpeg: boolean; youtube: boolean }
 export interface Library { podcasts: Podcast[]; episodes: Episode[]; jobs: Job[] }
 export const activeJob = (j: Job) => j.state === 'queued' || j.state === 'running';
+export function hasCompleteScript(episode: Episode, podcast: Podcast): boolean {
+  const script = episode.script;
+  return !!script?.chapters.length && !['planned', 'writing'].includes(episode.status)
+    && script.chapters.every(c => c.turns.length > 0)
+    && (!podcast.outline || script.chapters.length === podcast.outline.episodes[episode.number - 1]?.chapters.length);
+}
 export function countWords(script: Script): number { return script.chapters.flatMap(c => c.turns).reduce((n, t) => n + t.text.replace(/<[^>]+>/g, '').trim().split(/\s+/u).filter(Boolean).length, 0); }
 export function durationRange(config: Pick<PodcastConfig, 'minutes' | 'tolerance'>) { return { min: config.minutes - config.tolerance, max: config.minutes + config.tolerance }; }

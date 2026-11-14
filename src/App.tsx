@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowDownToLine, ArrowLeft, ArrowRight, AudioLines, BookOpen, Check, ChevronRight, CircleCheck, Clock3, FileText, Headphones, Layers3, Library, Link2, LoaderCircle, Mic2, Pause, Play, Plus, Radio, RefreshCw, Settings2, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume2, X } from 'lucide-react';
-import { HOSTS, activeJob, durationRange, type AppStatus, type Episode, type Host, type Library as LibraryData, type Podcast, type PodcastConfig, type Script, type Source } from '../shared/types';
+import { HOSTS, activeJob, durationRange, hasCompleteScript, type AppStatus, type Episode, type FollowUpLink, type Host, type Library as LibraryData, type Podcast, type PodcastConfig, type Script, type Source } from '../shared/types';
 import { api, post } from './api';
 import { SoundtrackPanel } from './SoundtrackPanel';
 type PlayingEpisode = Episode & { previewStart?: number; playToken?: number };
 
-type View = 'create' | 'library' | 'hosts' | 'settings' | 'episode';
+type View = 'create' | 'follow-up' | 'library' | 'hosts' | 'settings' | 'episode';
 type SourceInfo = Omit<Source, 'text'>;
 const emptyLibrary: LibraryData = { podcasts: [], episodes: [], jobs: [] };
 const initialConfig: PodcastConfig = { topic: '', minutes: 30, tolerance: 3, hostIds: ['maya', 'leo'], episodeCount: 1, model: '', language: 'English', sourceMode: 'supplement', sourceIds: [], soundDesign: 'subtle' };
@@ -23,6 +23,9 @@ export default function App() {
   const [library, setLibrary] = useState<LibraryData>(emptyLibrary);
   const [config, setConfig] = useState<PodcastConfig>(initialConfig);
   const [sources, setSources] = useState<SourceInfo[]>([]);
+  const [followUp, setFollowUp] = useState<FollowUpLink>();
+  const [followUpConfig, setFollowUpConfig] = useState<PodcastConfig>(initialConfig);
+  const [followUpSources, setFollowUpSources] = useState<SourceInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
   const [playing, setPlaying] = useState<PlayingEpisode>();
@@ -32,7 +35,12 @@ export default function App() {
   const refresh = useCallback(async () => { const version = ++libraryVersion.current; try { const data = await api<LibraryData>('/library'); if (version === libraryVersion.current) setLibrary(data); } catch (e) { notify((e as Error).message, true); } }, [notify]);
   const refreshStatus = useCallback(async (force = false) => {
     setStatusLoading(true);
-    try { const value = await api<AppStatus>(`/status${force ? '?refresh=1' : ''}`); setStatus(value); setConfig(c => c.model ? c : { ...c, model: value.codex.models.find(m => m.isDefault)?.id || value.codex.models[0]?.id || '' }); }
+    try {
+      const value = await api<AppStatus>(`/status${force ? '?refresh=1' : ''}`); setStatus(value);
+      const model = value.codex.models.find(m => m.isDefault)?.id || value.codex.models[0]?.id || '';
+      setConfig(c => c.model ? c : { ...c, model });
+      setFollowUpConfig(c => !model || value.codex.models.some(m => m.id === c.model) ? c : { ...c, model });
+    }
     catch (e) { notify((e as Error).message, true); } finally { setStatusLoading(false); }
   }, [notify]);
   useEffect(() => { void refresh(); void refreshStatus(); }, [refresh, refreshStatus]);
@@ -42,6 +50,21 @@ export default function App() {
   useEffect(() => { if (!notice || notice.error) return; const timer = setTimeout(() => setNotice(undefined), 6000); return () => clearTimeout(timer); }, [notice]);
   const navigate = (next: View) => { if (next === 'hosts') setPlaying(undefined); setView(next); window.scrollTo({ top: 0 }); };
   const openEpisode = (id: string) => { setSelectedId(id); navigate('episode'); };
+  function beginFollowUp(episode: Episode, podcast: Podcast) {
+    if (followUp?.episodeId !== episode.id) {
+      const model = status?.codex.models.some(m => m.id === podcast.config.model) ? podcast.config.model : status?.codex.models.find(m => m.isDefault)?.id || status?.codex.models[0]?.id || config.model;
+      setFollowUp({ episodeId: episode.id, title: episode.title });
+      setFollowUpConfig({ ...podcast.config, topic: '', episodeCount: 1, sourceIds: [], sourceMode: 'supplement', model });
+      setFollowUpSources([]);
+    }
+    navigate('follow-up');
+  }
+  async function onCreated(podcast: Podcast) {
+    await refresh();
+    const data = await api<LibraryData>('/library'); setLibrary(data);
+    if (podcast.followUp) setFollowUp(undefined);
+    const first = data.episodes.find(e => e.podcastId === podcast.id); if (first) openEpisode(first.id);
+  }
   async function deleteEpisode(episode: Episode) {
     const data = await api<LibraryData>(`/episodes/${episode.id}`, { method: 'DELETE' });
     libraryVersion.current++; setLibrary(data);
@@ -59,7 +82,7 @@ export default function App() {
       <a href="#" className="brand" onClick={e => { e.preventDefault(); navigate('create'); }}><span className="brand-mark"><AudioLines size={24}/></span>commute<span className="brand-period">.</span></a>
       <div className="nav-label">YOUR LISTENING SPACE</div>
       <nav aria-label="Main navigation">
-        <button className={view === 'create' ? 'active' : ''} onClick={() => navigate('create')}><Plus size={19}/>Create a podcast<span className="nav-plus">+</span></button>
+        <button className={view === 'create' || view === 'follow-up' ? 'active' : ''} onClick={() => navigate('create')}><Plus size={19}/>Create a podcast<span className="nav-plus">+</span></button>
         <button className={['library', 'episode'].includes(view) ? 'active' : ''} onClick={() => navigate('library')}><Library size={19}/>Your library<span className="nav-count">{library.episodes.length}</span></button>
         <button className={view === 'hosts' ? 'active' : ''} onClick={() => navigate('hosts')}><Users size={19}/>Meet your hosts</button>
         <button className={`mobile-settings ${view === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings2 size={19}/>Settings</button>
@@ -69,11 +92,12 @@ export default function App() {
     </aside>
     <main>
       <header className="topbar"><span><span className="topbar-dot"/> MADE FOR YOUR EVERYDAY JOURNEY</span><span className="topbar-right"><Headphones size={15}/>{readyCount ? `${readyCount} ${readyCount === 1 ? 'episode' : 'episodes'} ready for the road` : 'Your time. Well spent.'}</span></header>
-      {view === 'create' && <CreateView config={config} setConfig={setConfig} sources={sources} setSources={setSources} status={status} statusLoading={statusLoading} notify={notify} onSettings={() => navigate('settings')} onCreated={async p => { await refresh(); const data = await api<LibraryData>('/library'); setLibrary(data); const first = data.episodes.find(e => e.podcastId === p.id); if (first) openEpisode(first.id); }}/>} 
+      {view === 'create' && <CreateView config={config} setConfig={setConfig} sources={sources} setSources={setSources} status={status} statusLoading={statusLoading} notify={notify} onSettings={() => navigate('settings')} onCreated={onCreated}/>}
+      {view === 'follow-up' && followUp && <CreateView key={followUp.episodeId} config={followUpConfig} setConfig={setFollowUpConfig} sources={followUpSources} setSources={setFollowUpSources} status={status} statusLoading={statusLoading} notify={notify} onSettings={() => navigate('settings')} onCreated={onCreated} followUp={followUp} onCancel={() => { if (library.episodes.some(e => e.id === followUp.episodeId)) openEpisode(followUp.episodeId); else navigate('library'); }}/>}
       {view === 'library' && <LibraryView library={library} openEpisode={openEpisode} play={setPlaying} create={() => navigate('create')} onDelete={setDeletingEpisode}/>}
       {view === 'hosts' && <HostsView notify={notify}/>}
       {view === 'settings' && <SettingsView status={status} loading={statusLoading} refresh={() => refreshStatus(true)} notify={notify}/>}
-      {view === 'episode' && selected && selectedPodcast && <EpisodeView key={selected.id} episode={selected} podcast={selectedPodcast} library={library} refresh={refresh} openEpisode={openEpisode} notify={notify} play={(e, startAt) => setPlaying({ ...e, previewStart: startAt, playToken: Date.now() })} stopPlayback={() => setPlaying(undefined)} back={() => navigate('library')} onSettings={() => navigate('settings')} status={status} onDelete={setDeletingEpisode}/>}
+      {view === 'episode' && selected && selectedPodcast && <EpisodeView key={selected.id} episode={selected} podcast={selectedPodcast} library={library} refresh={refresh} openEpisode={openEpisode} notify={notify} play={(e, startAt) => setPlaying({ ...e, previewStart: startAt, playToken: Date.now() })} stopPlayback={() => setPlaying(undefined)} back={() => navigate('library')} onSettings={() => navigate('settings')} status={status} onDelete={setDeletingEpisode} onFollowUp={() => beginFollowUp(selected, selectedPodcast)}/>}
       {view === 'episode' && !selected && <div className="page-content"><p>Loading your episode…</p></div>}
       <footer><span>Made for the way.</span><span>Personal podcasts, powered by your curiosity.</span></footer>
     </main>
@@ -83,9 +107,10 @@ export default function App() {
   </div>;
 }
 
-function CreateView({ config, setConfig, sources, setSources, status, statusLoading, notify, onCreated, onSettings }: {
+function CreateView({ config, setConfig, sources, setSources, status, statusLoading, notify, onCreated, onSettings, followUp, onCancel }: {
   config: PodcastConfig; setConfig: React.Dispatch<React.SetStateAction<PodcastConfig>>; sources: SourceInfo[]; setSources: React.Dispatch<React.SetStateAction<SourceInfo[]>>;
   status?: AppStatus; statusLoading: boolean; notify: (text: string, error?: boolean) => void; onCreated: (p: Podcast) => Promise<void>; onSettings: () => void;
+  followUp?: FollowUpLink; onCancel?: () => void;
 }) {
   const [url, setUrl] = useState(''); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState(false); const [series, setSeries] = useState(config.episodeCount > 1);
   const [dragging, setDragging] = useState(false); const fileInput = useRef<HTMLInputElement>(null);
@@ -99,19 +124,21 @@ function CreateView({ config, setConfig, sources, setSources, status, statusLoad
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true);
     try {
-      const podcast = await post<Podcast>('/podcasts', { ...config, episodeCount: series ? Math.max(2, config.episodeCount) : 1, sourceIds: sources.map(s => s.id), sourceMode: sources.length ? config.sourceMode : 'supplement', model: config.model || 'default' });
+      const podcast = await post<Podcast>(followUp ? `/episodes/${followUp.episodeId}/follow-up` : '/podcasts', { ...config, episodeCount: !followUp && series ? Math.max(2, config.episodeCount) : 1, sourceIds: sources.map(s => s.id), sourceMode: sources.length ? config.sourceMode : 'supplement', model: config.model || 'default' });
       try { await post(`/podcasts/${podcast.id}/write`); } catch (e) { notify(`Your draft is saved. ${(e as Error).message}`, true); }
       await onCreated(podcast);
     } catch (e) { notify((e as Error).message, true); } finally { setBusy(false); }
   }
   const range = durationRange(config); const chosenHosts = config.hostIds.map(id => HOSTS.find(h => h.id === id)!);
   return <div className="page-content create-page">
-    <div className="page-intro"><div><div className="eyebrow">THE NEXT GOOD THING TO LISTEN TO</div><h1>A little further,<br/><em>every day.</em></h1><p>Turn something you’re curious about into a podcast for the road.</p></div><JourneyArt/></div>
+    {followUp && <button className="back-button" onClick={onCancel}><ArrowLeft size={16}/>Back to episode</button>}
+    <div className="page-intro"><div><div className="eyebrow">{followUp ? 'KEEP THE CONVERSATION GOING' : 'THE NEXT GOOD THING TO LISTEN TO'}</div><h1>{followUp ? <>There’s more<br/><em>to the story.</em></> : <>A little further,<br/><em>every day.</em></>}</h1><p>{followUp ? 'Go deeper with a follow-up that builds on what you’ve heard.' : 'Turn something you’re curious about into a podcast for the road.'}</p></div><JourneyArt/></div>
+    {followUp && <div className="follow-up-context"><Link2 size={20}/><div><div className="eyebrow">FOLLOW-UP TO</div><strong>{followUp.title}</strong><p>We’ll use the earlier conversation to preserve continuity and avoid repeating it. Tell us what to explore next, and add any new sources below.</p></div></div>}
     <form onSubmit={submit} className="create-layout">
       <div className="editor-card">
-        <Section number="01" title="What’s on your mind?">
-          <label className="sr-only" htmlFor="topic">Podcast topic</label><textarea id="topic" className="topic-input" value={config.topic} onChange={e => update('topic', e.target.value)} placeholder={'An idea, a question, a rabbit hole…\nWhat would you love to understand a little better?'} minLength={5} maxLength={4000} required rows={4}/>
-          <div className="suggestions"><span>TRY A LITTLE CURIOSITY</span>{['The future of nuclear energy', 'Why we dream', 'How AI agents work'].map(topic => <button type="button" key={topic} onClick={() => update('topic', topic)}>{topic}<Plus size={12}/></button>)}</div>
+        <Section number="01" title={followUp ? 'Where should we go next?' : 'What’s on your mind?'}>
+          <label className="sr-only" htmlFor="topic">{followUp ? 'Follow-up topic' : 'Podcast topic'}</label><textarea id="topic" className="topic-input" value={config.topic} onChange={e => update('topic', e.target.value)} placeholder={followUp ? 'What caught your attention?\nDescribe a question, an idea to explore further, or a new angle.' : 'An idea, a question, a rabbit hole…\nWhat would you love to understand a little better?'} minLength={5} maxLength={4000} required rows={4}/>
+          {!followUp && <div className="suggestions"><span>TRY A LITTLE CURIOSITY</span>{['The future of nuclear energy', 'Why we dream', 'How AI agents work'].map(topic => <button type="button" key={topic} onClick={() => update('topic', topic)}>{topic}<Plus size={12}/></button>)}</div>}
           <div className="source-heading"><label>Bring your own sources <span>Optional</span></label><span>We’ll read them before writing.</span></div>
           <div className="source-actions"><div className="url-input"><Link2 size={16}/><input aria-label="Source URL or YouTube link" value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste an article or YouTube link" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void addUrl(); } }}/><button type="button" aria-label="Add source link" onClick={() => void addUrl()} disabled={!url.trim() || adding || sources.length >= 12}>{adding ? <LoaderCircle className="spin" size={17}/> : <Plus size={18}/>}</button></div>
             <button type="button" className={`upload-button ${dragging ? 'dragging' : ''}`} disabled={adding || sources.length >= 12} onClick={() => fileInput.current?.click()} onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={e => { e.preventDefault(); setDragging(false); void addFiles(e.dataTransfer.files); }}><Upload size={16}/>{adding ? 'Reading…' : 'Upload files'}</button><input ref={fileInput} hidden type="file" multiple accept=".pdf,.docx,.txt,.md,.csv,.srt,.vtt" onChange={e => e.target.files && void addFiles(e.target.files)}/></div>
@@ -126,14 +153,14 @@ function CreateView({ config, setConfig, sources, setSources, status, statusLoad
           <div className="length-heading"><label htmlFor="minutes">Episode length</label><span><strong>{config.minutes}</strong> min <span className="default-label">{config.minutes === 30 ? 'COMMUTE SWEET SPOT' : ''}</span></span></div>
           <input id="minutes" aria-label="Episode length in minutes" type="range" min="5" max="60" step="5" value={config.minutes} onChange={e => { const minutes = Number(e.target.value); setConfig(c => ({ ...c, minutes, tolerance: Math.min(c.tolerance, minutes - 1) })); }} style={{ '--range': `${(config.minutes - 5) / 55 * 100}%` } as React.CSSProperties}/><div className="range-labels"><span>5 min</span><span>30 min</span><span>60 min</span></div>
           <div className="tolerance-row"><Clock3 size={16}/><span>A little breathing room</span><select aria-label="Duration tolerance" value={config.tolerance} onChange={e => update('tolerance', Number(e.target.value))}>{[1, 2, 3, 5, 10].filter(t => t < config.minutes).map(t => <option value={t} key={t}>± {t} min</option>)}</select><small>Target: {range.min}–{range.max} minutes</small></div>
-          <div className={`series-box ${series ? 'series-on' : ''}`}><Layers3 size={20}/><div><strong>There’s more to the story</strong><p>Make a series. One topic, a fresh angle each episode.</p></div><button aria-label="Make a multi-episode series" role="switch" aria-checked={series} type="button" className={`switch ${series ? 'on' : ''}`} onClick={() => { setSeries(!series); update('episodeCount', !series ? 3 : 1); }}><span/></button></div>
-          {series && <div className="series-options"><label htmlFor="episodes">Episodes in your series</label><input id="episodes" type="number" min="2" max="12" value={config.episodeCount} onChange={e => update('episodeCount', Number(e.target.value))}/><span>About {config.episodeCount * config.minutes} minutes of discovery</span></div>}
+          {!followUp && <><div className={`series-box ${series ? 'series-on' : ''}`}><Layers3 size={20}/><div><strong>There’s more to the story</strong><p>Make a series. One topic, a fresh angle each episode.</p></div><button aria-label="Make a multi-episode series" role="switch" aria-checked={series} type="button" className={`switch ${series ? 'on' : ''}`} onClick={() => { setSeries(!series); update('episodeCount', !series ? 3 : 1); }}><span/></button></div>
+          {series && <div className="series-options"><label htmlFor="episodes">Episodes in your series</label><input id="episodes" type="number" min="2" max="12" value={config.episodeCount} onChange={e => update('episodeCount', Number(e.target.value))}/><span>About {config.episodeCount * config.minutes} minutes of discovery</span></div>}</>}
         </Section>
         <Section number="04" title="Your writing room"><div className="writing-fields"><label>Script model<select value={config.model} onChange={e => update('model', e.target.value)} disabled={statusLoading || !status?.codex.models.length}>{!status?.codex.models.length && <option value="">{statusLoading ? 'Loading your models…' : 'Connect ChatGPT in Settings'}</option>}{status?.codex.models.map(m => <option key={m.id} value={m.id}>{m.name}{m.isDefault ? ' · default' : ''}</option>)}</select></label><label>Language<select value={config.language} onChange={e => update('language', e.target.value as PodcastConfig['language'])}><option>English</option><option>French</option></select></label></div><p className="field-hint"><span className={`connection-dot ${status?.codex.connected ? 'connected' : ''}`}/> {status?.codex.connected ? 'Uses your ChatGPT subscription through local Codex.' : 'Your ChatGPT sign-in powers script generation.'}</p></Section>
         <Section number="05" title="A little atmosphere"><label className="checkbox-label"><input type="checkbox" checked={config.soundDesign === 'subtle'} onChange={e => update('soundDesign', e.target.checked ? 'subtle' : 'off')}/>Automatically choose music & ambience</label><p className="field-hint">A brief opening, a familiar ending, and a few thoughtful cues chosen from your script. Review or change them before recording. Clips are included.</p></Section>
       </div>
       <aside className="create-aside"><div className="listen-preview"><div className="preview-label"><span/> YOUR NEXT LISTEN<Headphones size={17}/></div><div className="cover-art"><div className="cover-orbit orbit-one"/><div className="cover-orbit orbit-two"/><div className="cover-orbit orbit-three"/><span className="cover-caption">FOLLOW YOUR<br/>CURIOSITY.</span><Wave/></div><h3>{config.topic.trim() || 'A good question is a great beginning.'}</h3><p>{series ? `${config.episodeCount} episodes. One deeper understanding.` : 'Your next commute starts with an idea.'}</p><div className="preview-hosts"><div className="avatar-stack">{chosenHosts.map(h => <Avatar key={h.id} host={h} small/>)}</div><span>With {chosenHosts.map(h => h.name).join(' & ')}</span></div><div className="preview-facts"><span><Clock3 size={15}/>{range.min}–{range.max} min{series ? ' / episode' : ''}</span><span><Mic2 size={15}/>{config.hostIds.length === 1 ? 'Solo story' : 'Two voices'}</span><span><FileText size={15}/>{sources.length ? `${sources.length} ${sources.length === 1 ? 'source' : 'sources'} added` : 'Topic-led research'}</span></div></div>
-      <Button type="submit" className="primary create-button" busy={busy} disabled={adding || config.topic.trim().length < 5}>{series ? 'Create my series' : 'Create my podcast'}<ArrowRight size={18}/></Button><p className="create-footnote">First, we’ll write your script.<br/>You can review it before recording.</p>
+      <Button type="submit" className="primary create-button" busy={busy} disabled={adding || config.topic.trim().length < 5}>{followUp ? 'Create my follow-up' : series ? 'Create my series' : 'Create my podcast'}<ArrowRight size={18}/></Button><p className="create-footnote">First, we’ll write your script.<br/>You can review it before recording.</p>
       {!statusLoading && (!status?.codex.connected || !status.gemini.configured) && <button className="setup-note" type="button" onClick={onSettings}><Settings2 size={17}/><span>{!status?.codex.connected ? 'Connect your writing room' : 'Add Gemini when you’re ready to record'}<small>Finish setup in Settings</small></span><ChevronRight size={16}/></button>}
       <div className="margin-note"><Sparkles size={17}/><p>Space for the interesting bits.<br/><span>Natural pacing, never filler to fill the clock.</span></p></div></aside>
     </form>
@@ -164,6 +191,7 @@ function DeleteEpisodeDialog({ episode, onCancel, onDelete }: { episode: Episode
     <div className="delete-dialog-icon"><Trash2 size={23}/></div>
     <h2 id="delete-episode-title">Delete this episode?</h2>
     <p id="delete-episode-description">“{episode.title}” will be permanently removed from your library, including its script and any saved audio. This cannot be undone.</p>
+    <p>Existing follow-ups keep their saved conversation context.</p>
     {error && <div className="inline-error" role="alert">{error}</div>}
     <div className="delete-dialog-actions"><button ref={cancel} className="button secondary" disabled={busy} onClick={onCancel}>Keep episode</button><Button className="danger" busy={busy} onClick={() => void confirm()}>{busy ? 'Deleting…' : 'Delete episode'}</Button></div>
   </dialog>;
@@ -193,12 +221,15 @@ function SettingsView({ status, loading, refresh, notify }: { status?: AppStatus
   </div>;
 }
 
-function EpisodeView({ episode, podcast, library, refresh, openEpisode, notify, play, stopPlayback, back, onSettings, status, onDelete }: { episode: Episode; podcast: Podcast; library: LibraryData; refresh: () => Promise<void>; openEpisode: (id: string) => void; notify: (s: string, e?: boolean) => void; play: (e: Episode, startAt?: number) => void; stopPlayback: () => void; back: () => void; onSettings: () => void; status?: AppStatus; onDelete: (e: Episode) => void }) {
+function EpisodeView({ episode, podcast, library, refresh, openEpisode, notify, play, stopPlayback, back, onSettings, status, onDelete, onFollowUp }: { episode: Episode; podcast: Podcast; library: LibraryData; refresh: () => Promise<void>; openEpisode: (id: string) => void; notify: (s: string, e?: boolean) => void; play: (e: Episode, startAt?: number) => void; stopPlayback: () => void; back: () => void; onSettings: () => void; status?: AppStatus; onDelete: (e: Episode) => void; onFollowUp: () => void }) {
   const [tab, setTab] = useState('script'); const [editing, setEditing] = useState(false); const [text, setText] = useState(''); const [busy, setBusy] = useState(false);
   const job = library.jobs.find(j => j.podcastId === podcast.id && j.state === 'running') || library.jobs.find(j => j.podcastId === podcast.id && activeJob(j));
   const latestJob = library.jobs.find(j => j.podcastId === podcast.id && (!j.episodeId || j.episodeId === episode.id));
   const siblings = library.episodes.filter(e => e.podcastId === podcast.id).sort((a, b) => a.number - b.number);
   const finishedScript = episode.script && (!podcast.outline || episode.script.chapters.length === podcast.outline.episodes[episode.number - 1].chapters.length);
+  const canFollowUp = hasCompleteScript(episode, podcast);
+  const previousEpisode = library.episodes.find(e => e.id === podcast.followUp?.episodeId);
+  const followUps = library.episodes.filter(e => library.podcasts.some(p => p.id === e.podcastId && p.followUp?.episodeId === episode.id));
   async function action(url: string, data?: unknown) { setBusy(true); try { await post(url, data); await refresh(); } catch (e) { notify((e as Error).message, true); } finally { setBusy(false); } }
   async function save() { setBusy(true); try { await api(`/episodes/${episode.id}/script`, { method: 'PUT', body: JSON.stringify({ text }) }); setEditing(false); await refresh(); notify('Script saved. Your next recording will use these changes.'); } catch (e) { notify((e as Error).message, true); } finally { setBusy(false); } }
   return <div className="page-content episode-page"><button className="back-button" onClick={back}><ArrowLeft size={16}/>Your library</button><div className="episode-heading"><div><div className="eyebrow">{podcast.config.episodeCount > 1 ? `${podcast.title} · EPISODE ${episode.number}` : podcast.sample ? 'YOUR ORIGINAL LISTENING TEST' : 'YOUR NEXT DISCOVERY'}</div><h1>{episode.title}</h1><p>{episode.focus || podcast.config.topic}</p><div className="episode-info"><StatusBadge status={episode.status}/><span><Clock3 size={15}/>{episode.durationSeconds ? time(episode.durationSeconds) : `~${podcast.config.minutes} minutes`}</span><span><Users size={15}/>{podcast.config.hostIds.map(id => HOSTS.find(h => h.id === id)!.name).join(' & ')}</span></div></div><div className="detail-cover"><Wave/><span>commute.</span></div></div>
@@ -212,9 +243,15 @@ function EpisodeView({ episode, podcast, library, refresh, openEpisode, notify, 
       {!job && !editing && siblings.length > 1 && siblings.some(e => e.status !== 'ready') && siblings.every(e => e.script && ['ready', 'review', 'failed'].includes(e.status) && (!podcast.outline || e.script.chapters.length === podcast.outline.episodes[e.number - 1].chapters.length)) && <Button className="secondary" busy={busy} onClick={() => status?.gemini.configured ? void action(`/podcasts/${podcast.id}/audio`) : onSettings()}><Layers3 size={17}/>Record the whole series</Button>}
       {episode.script && !job && !editing && <Button className="secondary" onClick={() => { setText(transcript(episode.script!)); setEditing(true); setTab('script'); }}><FileText size={17}/>Edit script</Button>}
       {!episode.script && !job && !editing && <Button className="secondary" onClick={() => { setText(`## The conversation\n\n${HOSTS.find(h => h.id === podcast.config.hostIds[0])!.name}: `); setEditing(true); setTab('script'); }}>Paste a script</Button>}
+      <Button className="secondary" disabled={!canFollowUp || editing || busy} title={editing ? 'Save or cancel your script edits first.' : !canFollowUp ? 'Finish the script before creating a follow-up.' : 'Explore a new angle on this conversation'} onClick={onFollowUp}><Plus size={17}/>Create a follow-up</Button>
       <Button className="danger-secondary" disabled={!!job || busy} title={job ? 'Stop generation before deleting an episode.' : 'Delete episode'} onClick={() => onDelete(episode)}><Trash2 size={16}/>Delete episode</Button>
       {episode.script && <a className="text-link" href={`/api/episodes/${episode.id}/script.txt`}>Download transcript<ArrowDownToLine size={15}/></a>}
     </div>
+    {!canFollowUp && <p className="follow-up-hint">Finish this episode’s script to create a follow-up.</p>}
+    {(podcast.followUp || followUps.length > 0) && <section className="linked-episodes" aria-label="Linked episodes">
+      {podcast.followUp && <div><div className="eyebrow">PREVIOUS EPISODE</div>{previousEpisode ? <button onClick={() => openEpisode(previousEpisode.id)}><ArrowLeft size={16}/><span>{previousEpisode.title}</span></button> : <p>{podcast.followUp.title}<small>Removed from your library · saved context retained</small></p>}</div>}
+      {followUps.length > 0 && <div><div className="eyebrow">CONTINUE THE CONVERSATION</div>{followUps.map(e => <button key={e.id} onClick={() => openEpisode(e.id)}><ArrowRight size={16}/><span>{e.title}</span><StatusBadge status={e.status}/></button>)}</div>}
+    </section>}
     <div className="episode-content-layout"><section className="transcript-card"><div className="tabs"><button className={tab === 'script' ? 'active' : ''} onClick={() => setTab('script')}>The conversation</button><button className={tab === 'sources' ? 'active' : ''} onClick={() => setTab('sources')}>Sources & notes</button>{finishedScript && <button className={tab === 'soundtrack' ? 'active' : ''} onClick={() => setTab('soundtrack')}>Music & ambience</button>}{episode.wordCount !== undefined && <span>{episode.wordCount.toLocaleString()} words</span>}</div>
       {tab === 'script' && editing ? <div className="script-editor"><p>Use <strong>Name:</strong> for each speaker and <strong>##</strong> for chapter headings. Saving edits requires a new audio recording.</p><label className="sr-only" htmlFor="transcript">Edit transcript</label><textarea id="transcript" value={text} onChange={e => setText(e.target.value)} spellCheck/><div><Button className="primary" busy={busy} onClick={() => void save()}>Save script<Check size={16}/></Button><Button className="secondary" onClick={() => setEditing(false)}>Cancel</Button></div></div>
       : tab === 'script' ? episode.script?.chapters.length ? <div className="transcript">{episode.script.chapters.map((chapter, ci) => <section key={ci}><div className="chapter-label">CHAPTER {String(ci + 1).padStart(2, '0')}</div><h2>{chapter.title}</h2>{chapter.turns.map((turn, ti) => { const host = HOSTS.find(h => h.name === turn.speaker); return <div className="transcript-turn" key={ti}>{host && <Avatar host={host} small/>}<div><strong>{turn.speaker}</strong><p>{turn.text}</p></div></div>; })}</section>)}</div> : <div className="empty-script"><BookOpen size={35}/><h2>A good story is taking shape.</h2><p>{job ? 'Your chapters will appear here as they’re written.' : 'Write your script with ChatGPT, or paste one you already have.'}</p></div>

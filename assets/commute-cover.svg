@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+  <rect width="1000" height="1000" fill="#182a25"/>
+  <g fill="none" stroke="#d3ee9b" opacity=".12">
+    <circle cx="500" cy="380" r="285"/>
+    <circle cx="500" cy="380" r="350"/>
+    <circle cx="500" cy="380" r="415"/>
+  </g>
+  <!-- The waveform from public/favicon.svg. -->
+  <path d="M290 470V350m135 240V200m150 330V260m135 195V365" fill="none" stroke="#d3ee9b" stroke-width="65" stroke-linecap="round"/>
+  <text x="500" y="815" fill="#f7f8f3" font-family="Segoe UI, Arial, sans-serif" font-size="145" font-weight="600" letter-spacing="-6" text-anchor="middle">commute.</text>
+  <text x="500" y="898" fill="#d3ee9b" font-family="Segoe UI, Arial, sans-serif" font-size="24" letter-spacing="6" text-anchor="middle">FOLLOW YOUR CURIOSITY</text>
+</svg>

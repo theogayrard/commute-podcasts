@@ -24,7 +24,7 @@ export class Store {
       this.remove('episode', id);
       const lastEpisode = !this.all<Episode>('episode').some(e => e.podcastId === episode.podcastId);
       for (const job of this.all<Job>('job').filter(j => j.episodeId === id || (lastEpisode && j.podcastId === episode.podcastId))) this.remove('job', job.id);
-      if (lastEpisode) this.remove('podcast', episode.podcastId);
+      if (lastEpisode) { this.remove('podcast', episode.podcastId); this.remove('continuity', episode.podcastId); }
       // Keep the original numbering and outline so remaining scripts still match their plans.
       // Sources can be shared by other podcasts or the current creation form.
     });

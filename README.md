@@ -32,6 +32,8 @@ Optional local programs:
 
 Both are already installed on the development computer. Paths can be configured with `CODEX_BIN`, `FFMPEG_BIN`, and `YTDLP_BIN`. `PORT` defaults to `4310`.
 
+MP3 downloads include the episode title, **Commute** as the artist/author, **Podcast** as the genre, and embedded Commute cover art. This applies to existing recordings too: the first download prepares a tagged copy using FFmpeg without re-encoding the audio or generating speech, then reuses that copy for later downloads. WAV downloads keep their original format.
+
 ## Use it on your phone, anywhere
 
 Your PC runs the app, writes scripts using its ChatGPT connection, and generates audio. Your phone connects through [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve), which provides a private HTTPS address accessible while Tailscale is connected. Your PC must stay awake, connected to the internet, and running Commute.
@@ -64,6 +66,14 @@ Run `npm run remote:setup` and restart `npm start` to enable it again. No router
 
 The original 4:32 Gemini listening test has been imported into the local library on the development computer. It is personal data in `.data`, not a bundled/fake example in source control.
 
+## Follow-up episodes
+
+Open any episode with a finished script and choose **Create a follow-up**. Describe what you want to explore next and optionally add new links or files. The form starts with the original episode’s hosts, duration, language, and sound preferences; you can change them before creating the next episode. Follow-ups are created one at a time and can have follow-ups of their own. Each episode page links to its predecessor and any direct follow-ups.
+
+Planning and chapter writing receive the earlier conversations in that chain, with instructions to bridge briefly, skip material already covered, and develop new depth. Long transcripts are excerpted with chapter headings and excerpts from both ends retained. Earlier dialogue is continuity context, not a substitute for factual sources; **Use only these sources** still restricts new factual claims to the sources added to the follow-up. Review the generated script for repetition and accuracy before recording.
+
+Conversation context is saved locally when the follow-up draft is created and reused on retries. Editing or deleting an earlier episode does not change existing follow-ups or their saved context. Deleting a follow-up removes its own context record; any descendants keep their independent snapshots. An episode without a complete script must finish writing before a follow-up can be created.
+
 ## Music and ambience
 
 New podcasts have **Automatically choose music & ambience** enabled in the creation form. After writing, the app reads the complete script and chooses a consistent instrumental theme plus occasional chapter transitions or ambience. Uncheck the option for voice-only episodes. The sound-selection pass uses your existing writing connection; it does not use Gemini or a separate music service.
@@ -92,6 +102,7 @@ Supported files: **PDF, DOCX, TXT, Markdown, CSV, SRT, VTT**, up to 15 MB each. 
 
 - `.data/commute.sqlite`: podcasts, sources, scripts, episode state, and job history.
 - `.data/audio/<episode-id>/`: generated sections and finished recordings.
+- `.data/audio/<episode-id>/download-*.mp3`: cached downloads with episode metadata and embedded cover art. A changed title, recording, or cover produces a fresh copy.
 - `.data/audio/<episode-id>/narration.wav` and `narration.json`: original speech, content fingerprint, checksum and measured chapter starts for local remixes. Completed mixes have versioned filenames so playback can finish reading the version it started.
 - `assets/sounds/`: the bundled CC0 sound library, provenance and credits.
 - `.data/voices/`: cached host previews.

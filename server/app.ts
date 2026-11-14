@@ -17,6 +17,8 @@ import { accessControl, type RemoteAccess } from './remote-access.ts';
 import { SOUND_LIBRARY, soundClip } from '../shared/sound-library.ts';
 import { soundPath } from './sound-mix.ts';
 import { editSoundtrack, soundtrackHash } from './soundtrack.ts';
+import { prepareMp3Download } from './mp3.ts';
+import { snapshotContinuity } from './follow-up.ts';
 
 export async function createApp(store = new Store(), remoteAccess?: RemoteAccess) {
   const app = express(); const port = Number(process.env.PORT || 4310);
@@ -67,16 +69,26 @@ export async function createApp(store = new Store(), remoteAccess?: RemoteAccess
     const { url } = z.object({ url: z.string().url().max(2000) }).parse(req.body);
     const source = await urlSource(url); store.put('source', source); const { text, ...info } = source; res.status(201).json(info);
   });
-  app.post('/api/podcasts', async (req, res) => {
-    const config = configSchema.parse(req.body);
+  function createPodcast(input: unknown, followUpToEpisodeId?: string): Podcast {
+    const config = configSchema.parse(input);
     if (config.sourceIds.some(id => !store.source(id))) throw new Error('One of your sources could not be found. Please add it again.');
     const item: Podcast = { id: randomUUID(), title: config.topic.slice(0, 100), config, createdAt: new Date().toISOString() };
+    const parent = followUpToEpisodeId ? episode(followUpToEpisodeId) : undefined;
+    if (parent && config.episodeCount !== 1) throw new Error('Create one follow-up episode at a time. You can continue it with another follow-up.');
+    const continuity = parent ? snapshotContinuity(store, item.id, parent) : undefined;
+    if (parent) {
+      item.followUp = { episodeId: parent.id, title: parent.title };
+      item.soundThemeId = store.podcast(parent.podcastId)?.soundThemeId;
+    }
     store.transaction(() => {
       store.put('podcast', item);
+      if (continuity) store.put('continuity', continuity);
       for (let n = 1; n <= config.episodeCount; n++) store.put<Episode>('episode', { id: randomUUID(), podcastId: item.id, number: n, title: config.episodeCount === 1 ? item.title : `Episode ${n}`, focus: '', status: 'planned', createdAt: item.createdAt });
     });
-    res.status(201).json(item);
-  });
+    return item;
+  }
+  app.post('/api/podcasts', (req, res) => res.status(201).json(createPodcast(req.body)));
+  app.post('/api/episodes/:id/follow-up', (req, res) => res.status(201).json(createPodcast(req.body, id(req.params.id))));
   app.post('/api/podcasts/:id/write', async (req, res) => { const p = podcast(req.params.id); await writerReady(p.config.model); res.status(202).json(queue.add('write', p.id)); });
   app.post('/api/podcasts/:id/audio', async (req, res) => {
     const p = podcast(req.params.id); idle(p.id);
@@ -136,7 +148,7 @@ export async function createApp(store = new Store(), remoteAccess?: RemoteAccess
     const result = store.put('episode', { ...e, script, status: 'review', audioFile: undefined, durationSeconds: undefined, error: undefined, soundtrack: undefined, soundtrackDirty: undefined, audioRevision: undefined, mixedSoundtrackHash: undefined, renderedCues: undefined, mixNote: undefined, narrationTiming: undefined, ...scriptMetrics(script, p) }); res.json(result);
   });
   app.get('/api/episodes/:id/script.txt', (req, res) => { const e = episode(req.params.id); if (!e.script) return res.status(404).end(); res.type('text/plain').attachment(`commute-episode-${e.number}.txt`).send(`${e.title}\n\n${scriptToText(e.script)}\n\nSources\n${e.script.references.map(r => `${r.title}${r.url ? ': ' + r.url : ''}`).join('\n')}`); });
-  app.get('/api/episodes/:id/audio', (req, res) => {
+  app.get('/api/episodes/:id/audio', async (req, res) => {
     const e = episode(req.params.id); if (!e.audioFile || e.status !== 'ready') return res.status(404).json({ error: 'Audio is not ready.' });
     const directory = path.join(dataDir, 'audio', e.id);
     let file = path.join(directory, path.basename(e.audioFile));
@@ -148,7 +160,10 @@ export async function createApp(store = new Store(), remoteAccess?: RemoteAccess
       if (!previous) return res.status(404).json({ error: 'This audio version is no longer available.' });
       file = previous;
     }
-    if (req.query.download === '1') res.attachment(`commute-episode-${e.number}${path.extname(file)}`);
+    if (req.query.download === '1') {
+      if (path.extname(file).toLowerCase() === '.mp3') file = await prepareMp3Download(file, e.title);
+      res.attachment(`commute-episode-${e.number}${path.extname(file)}`);
+    }
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(file, { dotfiles: 'allow' });
   });
